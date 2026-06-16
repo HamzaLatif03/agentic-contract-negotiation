@@ -1,42 +1,29 @@
-from loan_negotiation.models.loan_terms import BorrowerTerms, LenderTerms
 from loan_negotiation.services.feasibility import FeasibilityStatus, check_feasibility
+from loan_negotiation.workflow.samples import sample_borrower, sample_lender
 
 
 def test_feasible_deal():
-    borrower = BorrowerTerms(
-        principal_requested=100_000,
-        max_interest_rate=8.0,
-        min_loan_term_months=12,
-        max_loan_term_months=60,
-    )
-    lender = LenderTerms(
-        max_principal=150_000,
-        min_interest_rate=5.0,
-        min_loan_term_months=12,
-        max_loan_term_months=84,
-    )
-
-    result = check_feasibility(borrower, lender)
+    result = check_feasibility(sample_borrower(), sample_lender())
 
     assert result.status == FeasibilityStatus.POSSIBLE
     assert result.reasons == []
 
 
 def test_impossible_interest_rate():
-    borrower = BorrowerTerms(
-        principal_requested=100_000,
-        max_interest_rate=4.0,
-        min_loan_term_months=12,
-        max_loan_term_months=60,
-    )
-    lender = LenderTerms(
-        max_principal=150_000,
-        min_interest_rate=6.0,
-        min_loan_term_months=12,
-        max_loan_term_months=84,
-    )
+    borrower = sample_borrower(min_interest_rate_pct=3.0, max_interest_rate_pct=4.0)
+    lender = sample_lender(min_interest_rate_pct=6.0, max_interest_rate_pct=7.0)
 
     result = check_feasibility(borrower, lender)
 
     assert result.status == FeasibilityStatus.IMPOSSIBLE
-    assert len(result.reasons) == 1
+    assert any("rate" in reason.lower() for reason in result.reasons)
+
+
+def test_impossible_downpayment():
+    borrower = sample_borrower(min_downpayment=20_000, max_downpayment=30_000)
+    lender = sample_lender(min_downpayment=50_000, max_downpayment=60_000)
+
+    result = check_feasibility(borrower, lender)
+
+    assert result.status == FeasibilityStatus.IMPOSSIBLE
+    assert any("downpayment" in reason.lower() for reason in result.reasons)
