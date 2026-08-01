@@ -5,14 +5,12 @@ from loan_negotiation.workflow.samples import sample_borrower, sample_lender
 
 def test_borrower_missing_fields_when_empty():
     missing = borrower_missing_fields(BorrowerTerms())
-
-    assert len(missing) == 4
+    assert len(missing) >= 10
 
 
 def test_lender_missing_fields_when_empty():
     missing = lender_missing_fields(LenderTerms())
-
-    assert len(missing) >= 3
+    assert len(missing) >= 10
 
 
 def test_intake_complete_when_all_fields_set():
@@ -21,6 +19,5 @@ def test_intake_complete_when_all_fields_set():
 
 def test_intake_incomplete_when_borrower_partial():
     borrower = sample_borrower()
-    borrower.fixed_preference = None
-
+    borrower.preferred_rate_type = None
     assert intake_complete(borrower, sample_lender()) is False

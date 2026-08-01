@@ -1,76 +1,46 @@
-from loan_negotiation.models.loan_terms import DealTerms
+import pytest
+
 from loan_negotiation.models.workflow import WorkflowStatus
 from loan_negotiation.workflow.deal_parser import extract_final_deal
 from loan_negotiation.workflow.orchestrator import _final_status
 from loan_negotiation.workflow.samples import sample_borrower, sample_lender
+from deal_fixtures import DEAL_JSON, sample_deal
 
 
-MATCHING_TRANSCRIPT = """\
+MATCHING_TRANSCRIPT = f"""\
 Lender:
 ```json
-{"downpayment":65000,"interest_rate_pct":4.8,"loan_length_years":25,"interest_structure":2,"consensus_reached":false}
+{DEAL_JSON}
 ```
 
 Borrower:
 ```json
-{"downpayment":65000,"interest_rate_pct":4.8,"loan_length_years":25,"interest_structure":2,"consensus_reached":false}
+{DEAL_JSON}
 ```
 """
 
 
-def test_matching_offers_resolve_to_consensus_deal():
+def test_matching_offers_without_accept_are_not_consensus():
+    """Echo-copy of the lender package must not count as agreement."""
     deal = extract_final_deal(MATCHING_TRANSCRIPT, sample_borrower(), sample_lender())
-
-    assert deal is not None
-    assert deal.consensus_reached is True
-    assert deal.downpayment == 65_000
-    assert deal.interest_rate_pct == 4.8
+    assert deal is None or deal.consensus_reached is False
 
 
-def test_final_status_approved_when_fair():
-    deal = DealTerms(
-        downpayment=65_000,
-        interest_rate_pct=4.8,
-        loan_length_years=25,
-        interest_structure=5,
-        consensus_reached=True,
-    )
+@pytest.mark.parametrize(
+    ("consensus", "issues", "fair", "expected"),
+    [
+        (True, [], True, WorkflowStatus.APPROVED),
+        (True, [], False, WorkflowStatus.REJECTED),
+        (True, ["bad"], True, WorkflowStatus.REJECTED),
+        (False, [], True, WorkflowStatus.NO_DEAL),
+        (None, [], True, WorkflowStatus.NO_DEAL),
+    ],
+)
+def test_final_status(consensus, issues, fair, expected):
+    deal = None
+    if consensus is not None:
+        deal = sample_deal(consensus_reached=consensus)
     assert (
-        _final_status(final_deal=deal, validation_issues=[], fairness_passed=True)
-        == WorkflowStatus.APPROVED
-    )
-
-
-def test_final_status_rejected_when_unfair():
-    deal = DealTerms(
-        downpayment=65_000,
-        interest_rate_pct=4.8,
-        loan_length_years=25,
-        interest_structure=5,
-        consensus_reached=True,
-    )
-    assert (
-        _final_status(final_deal=deal, validation_issues=[], fairness_passed=False)
-        == WorkflowStatus.REJECTED
-    )
-
-
-def test_final_status_no_deal_without_consensus():
-    deal = DealTerms(
-        downpayment=65_000,
-        interest_rate_pct=4.8,
-        loan_length_years=25,
-        interest_structure=5,
-        consensus_reached=False,
-    )
-    assert (
-        _final_status(final_deal=deal, validation_issues=[], fairness_passed=True)
-        == WorkflowStatus.NO_DEAL
-    )
-
-
-def test_final_status_no_deal_when_missing():
-    assert (
-        _final_status(final_deal=None, validation_issues=[], fairness_passed=True)
-        == WorkflowStatus.NO_DEAL
+        _final_status(final_deal=deal, validation_issues=issues, fairness_passed=fair)
+        == expected
     )

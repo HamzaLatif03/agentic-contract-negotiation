@@ -26,4 +26,4 @@ def test_impossible_downpayment():
     result = check_feasibility(borrower, lender)
 
     assert result.status == FeasibilityStatus.IMPOSSIBLE
-    assert any("downpayment" in reason.lower() for reason in result.reasons)
+    assert any("deposit" in reason.lower() for reason in result.reasons)

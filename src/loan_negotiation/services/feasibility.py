@@ -28,47 +28,38 @@ def _ranges_overlap(
     return True
 
 
+_RANGE_CHECKS: tuple[tuple[str, str, str, str], ...] = (
+    ("min_downpayment", "max_downpayment", "Deposit (£)", ""),
+    ("min_interest_rate_pct", "max_interest_rate_pct", "Interest rate", "%"),
+    ("min_loan_length_years", "max_loan_length_years", "Loan term", " years"),
+    ("min_arrangement_fee", "max_arrangement_fee", "Arrangement fee (£)", ""),
+    ("min_cashback", "max_cashback", "Cashback (£)", ""),
+    (
+        "min_overpayment_allowance_pct",
+        "max_overpayment_allowance_pct",
+        "Overpayment allowance",
+        "%",
+    ),
+    ("min_erc_pct", "max_erc_pct", "ERC", "%"),
+)
+
+
 def check_feasibility(
     borrower: BorrowerTerms,
     lender: LenderTerms,
 ) -> FeasibilityResult:
     reasons: list[str] = []
 
-    if not _ranges_overlap(
-        borrower.min_downpayment,
-        borrower.max_downpayment,
-        lender.min_downpayment,
-        lender.max_downpayment,
-    ):
-        reasons.append(
-            f"Downpayment ranges do not overlap "
-            f"(borrower {borrower.min_downpayment}-{borrower.max_downpayment}, "
-            f"lender {lender.min_downpayment}-{lender.max_downpayment})."
-        )
-
-    if not _ranges_overlap(
-        borrower.min_interest_rate_pct,
-        borrower.max_interest_rate_pct,
-        lender.min_interest_rate_pct,
-        lender.max_interest_rate_pct,
-    ):
-        reasons.append(
-            f"Interest rate ranges do not overlap "
-            f"(borrower {borrower.min_interest_rate_pct}-{borrower.max_interest_rate_pct}%, "
-            f"lender {lender.min_interest_rate_pct}-{lender.max_interest_rate_pct}%)."
-        )
-
-    if not _ranges_overlap(
-        borrower.min_loan_length_years,
-        borrower.max_loan_length_years,
-        lender.min_loan_length_years,
-        lender.max_loan_length_years,
-    ):
-        reasons.append(
-            f"Loan length ranges do not overlap "
-            f"(borrower {borrower.min_loan_length_years}-{borrower.max_loan_length_years} years, "
-            f"lender {lender.min_loan_length_years}-{lender.max_loan_length_years} years)."
-        )
+    for min_attr, max_attr, label, unit in _RANGE_CHECKS:
+        b_min = getattr(borrower, min_attr)
+        b_max = getattr(borrower, max_attr)
+        l_min = getattr(lender, min_attr)
+        l_max = getattr(lender, max_attr)
+        if not _ranges_overlap(b_min, b_max, l_min, l_max):
+            reasons.append(
+                f"{label} ranges do not overlap "
+                f"(borrower {b_min}-{b_max}{unit}, lender {l_min}-{l_max}{unit})."
+            )
 
     if reasons:
         return FeasibilityResult(status=FeasibilityStatus.IMPOSSIBLE, reasons=reasons)

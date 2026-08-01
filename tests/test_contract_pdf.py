@@ -1,69 +1,54 @@
-from pathlib import Path
-import asyncio
+from io import BytesIO
 
 import pytest
-from fastapi.testclient import TestClient
+from pypdf import PdfWriter
 
-from loan_negotiation.api.main import app
+from deal_fixtures import sample_deal
 from loan_negotiation.services.contract_pdf import (
     ContractExtractionError,
-    extract_offer_heuristically,
-    extract_opening_offer_from_pdf,
     extract_text_from_pdf,
 )
-
-client = TestClient(app)
-
-SAMPLE_PDF = Path(__file__).resolve().parents[1] / "samples" / "lender_opening_offer.pdf"
-
-SAMPLE_TEXT = """
-Lender Opening Loan Offer
-Down payment: £70,000
-Interest rate: 5.25% per annum
-Loan term: 25 years
-Interest type: fixed rate
-"""
+from loan_negotiation.services.opening_offer import format_opening_offer_announcement
 
 
-def test_extract_offer_heuristically_from_text():
-    offer = extract_offer_heuristically(SAMPLE_TEXT)
-    assert offer is not None
-    assert offer.downpayment == 70000
-    assert offer.interest_rate_pct == 5.25
-    assert offer.loan_length_years == 25
-    assert offer.interest_structure == 1
-    assert offer.consensus_reached is False
+def _pdf_bytes_with_text(text: str) -> bytes:
+    """Build a tiny text PDF in-memory (no on-disk sample required)."""
+    safe = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = f"BT /F1 12 Tf 72 720 Td ({safe}) Tj ET".encode("latin-1")
+    objects = [
+        b"1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n",
+        b"2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
+        (
+            b"3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj\n"
+        ),
+        f"4 0 obj<< /Length {len(stream)} >>stream\n".encode("latin-1")
+        + stream
+        + b"\nendstream\nendobj\n",
+        b"5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(out))
+        out.extend(obj)
+    xref_pos = len(out)
+    out.extend(f"xref\n0 {len(offsets)}\n".encode("latin-1"))
+    out.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        out.extend(f"{off:010d} 00000 n \n".encode("latin-1"))
+    out.extend(
+        f"trailer<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode(
+            "latin-1"
+        )
+    )
+    return bytes(out)
 
 
-def test_extract_offer_from_json_block_in_text():
-    text = """
-    Proposed terms:
-    ```json
-    {
-      "downpayment": 65000,
-      "interest_rate_pct": 4.9,
-      "loan_length_years": 22,
-      "interest_structure": 8,
-      "consensus_reached": false
-    }
-    ```
-    """
-    offer = extract_offer_heuristically(text)
-    assert offer is not None
-    assert offer.downpayment == 65000
-    assert offer.interest_structure == 8
-
-
-def test_extract_opening_offer_from_sample_pdf():
-    data = SAMPLE_PDF.read_bytes()
-    text = extract_text_from_pdf(data)
+def test_extract_text_from_pdf():
+    pdf = _pdf_bytes_with_text("Down payment: 70000")
+    text = extract_text_from_pdf(pdf)
     assert "70000" in text.replace(",", "") or "Down payment" in text
-    offer, raw = asyncio.run(extract_opening_offer_from_pdf(data, use_llm=False))
-    assert offer.downpayment == 70000
-    assert offer.loan_length_years == 25
-    assert offer.interest_rate_pct == 5.25
-    assert offer.consensus_reached is False
-    assert raw
 
 
 def test_extract_text_rejects_empty_pdf_bytes():
@@ -71,22 +56,25 @@ def test_extract_text_rejects_empty_pdf_bytes():
         extract_text_from_pdf(b"")
 
 
-def test_parse_offer_pdf_endpoint():
-    response = client.post(
-        "/api/parse-offer-pdf",
-        files={"file": ("lender_opening_offer.pdf", SAMPLE_PDF.read_bytes(), "application/pdf")},
-    )
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data["opening_offer"]["downpayment"] == 70000
-    assert data["opening_offer"]["interest_rate_pct"] == 5.25
-    assert data["opening_offer"]["loan_length_years"] == 25
-    assert data["opening_offer"]["interest_structure"] == 1
+def test_extract_text_rejects_blank_pdf():
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    buf = BytesIO()
+    writer.write(buf)
+    with pytest.raises(ContractExtractionError, match="No extractable text"):
+        extract_text_from_pdf(buf.getvalue())
 
 
-def test_parse_offer_pdf_rejects_non_pdf_name():
-    response = client.post(
-        "/api/parse-offer-pdf",
-        files={"file": ("notes.txt", b"hello", "text/plain")},
+def test_format_opening_offer_announcement():
+    offer = sample_deal(
+        downpayment=70_000,
+        interest_rate_pct=5.25,
+        loan_length_years=25,
+        rate_type="fixed",
+        consensus_reached=False,
     )
-    assert response.status_code == 400
+    text = format_opening_offer_announcement(offer)
+    assert "£70,000" in text
+    assert "5.25%" in text
+    assert "fixed" in text
+    assert "downpayment" in text

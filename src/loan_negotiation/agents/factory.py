@@ -2,11 +2,14 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.messages import TextMessage
+from autogen_core import CancellationToken
 from autogen_core.models import ChatCompletionClient, ModelInfo
 from autogen_core.tools import BaseTool
 from autogen_ext.models.ollama import OllamaChatCompletionClient
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
+from loan_negotiation.agents.rate_limit_retry import RateLimitRetryClient
 from loan_negotiation.config import Settings, get_settings
 from loan_negotiation.services.model_catalog import (
     find_comparison_model,
@@ -27,37 +30,12 @@ _MODEL_INFO = ModelInfo(
 )
 
 
-def _resolve_api_credentials(entry, settings: Settings) -> tuple[str, str]:
-    """Return (api_key, base_url) for a catalog API model."""
-    # Prefer live env via catalog helpers; fall back to Settings fields.
-    key = provider_api_key(entry)
-    base = provider_base_url(entry)
-
-    if not key:
-        by_provider = {
-            "gemini": settings.google_api_key,
-            "groq": settings.groq_api_key,
-            "openrouter": settings.openrouter_api_key,
-        }
-        key = by_provider.get(entry.provider) or settings.llm_api_key
-
-    if not base:
-        by_provider_url = {
-            "gemini": settings.gemini_api_base_url,
-            "groq": settings.groq_api_base_url,
-            "openrouter": settings.openrouter_api_base_url,
-        }
-        base = by_provider_url.get(entry.provider) or settings.llm_api_base_url or ""
-
-    if not key:
-        needed = entry.key_env[0] if entry.key_env else "API key"
-        raise RuntimeError(
-            f"Model '{entry.label}' needs {needed} in your local .env "
-            f"(or the process environment)."
-        )
-    if not base:
-        raise RuntimeError(f"Model '{entry.label}' has no API base URL configured.")
-    return key, base.rstrip("/")
+async def ask_agent(agent: AssistantAgent, prompt: str) -> str:
+    response = await agent.on_messages(
+        [TextMessage(content=prompt, source="user")],
+        cancellation_token=CancellationToken(),
+    )
+    return response.chat_message.to_text()
 
 
 def create_model_client(settings: Settings | None = None) -> ChatCompletionClient:
@@ -66,13 +44,24 @@ def create_model_client(settings: Settings | None = None) -> ChatCompletionClien
     entry = find_comparison_model(settings.model)
 
     if entry is not None and entry.runtime == "api":
-        api_key, base_url = _resolve_api_credentials(entry, settings)
-        return OpenAIChatCompletionClient(
+        api_key = provider_api_key(entry)
+        base_url = provider_base_url(entry)
+        if not api_key:
+            needed = entry.key_env[0] if entry.key_env else "API key"
+            raise RuntimeError(
+                f"Model '{entry.label}' needs {needed} in your local .env "
+                f"(or the process environment)."
+            )
+        if not base_url:
+            raise RuntimeError(f"Model '{entry.label}' has no API base URL configured.")
+        inner = OpenAIChatCompletionClient(
             model=entry.model_id,
             api_key=api_key,
             base_url=base_url,
             model_info=_MODEL_INFO,
         )
+        # Mistral free tier (and other APIs) can 429 mid-run; retry with backoff.
+        return RateLimitRetryClient(inner)
 
     # Ollama path: catalog local entry, or raw OLLAMA_MODEL / installed tag.
     ollama_model = settings.model

@@ -4,17 +4,22 @@ from autogen_agentchat.base import TerminatedException, TerminationCondition
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage, StopMessage
 
 from loan_negotiation.models.loan_terms import DealTerms
-from loan_negotiation.workflow.deal_parser import parse_offer_from_text_lenient
-from loan_negotiation.workflow.negotiation_state import deals_match
+from loan_negotiation.workflow.deal_parser import (
+    parse_offer_from_text_lenient,
+    prose_claims_acceptance,
+)
+from loan_negotiation.workflow.negotiation_state import (
+    apply_acceptance_semantics,
+    deals_match,
+)
 
 
 class JsonConsensusTermination(TerminationCondition):
-    """End when parties reach agreement on matching terms."""
+    """End only when a party explicitly accepts the other's latest package."""
 
     def __init__(self, sources: set[str]) -> None:
         self._sources = sources
         self._last_offer: dict[str, DealTerms] = {}
-        self._last_consensus: dict[str, DealTerms] = {}
         self._terminated = False
 
     @property
@@ -24,27 +29,31 @@ class JsonConsensusTermination(TerminationCondition):
     def _speaker(self, source: str) -> str:
         return "lender" if source == "lender_negotiator" else "borrower"
 
-    def _both_latest_offers_match(self) -> bool:
-        lender = self._last_offer.get("lender")
-        borrower = self._last_offer.get("borrower")
-        return (
-            lender is not None
-            and borrower is not None
-            and deals_match(lender, borrower)
-        )
-
-    def _check_explicit_consensus(self, speaker: str, offer: DealTerms) -> bool:
-        if not offer.consensus_reached:
-            return False
-
+    def _normalize_message_offer(
+        self, speaker: str, text: str
+    ) -> DealTerms | None:
         other = "borrower" if speaker == "lender" else "lender"
         other_last = self._last_offer.get(other)
-        if other_last is not None and deals_match(offer, other_last):
-            return True
-
-        self._last_consensus[speaker] = offer
-        other_consensus = self._last_consensus.get(other)
-        return other_consensus is not None and deals_match(offer, other_consensus)
+        offer = parse_offer_from_text_lenient(
+            text,
+            fallback=self._last_offer.get(speaker),
+        )
+        accepting = prose_claims_acceptance(text)
+        if offer is None:
+            if accepting and other_last is not None:
+                return other_last.model_copy(update={"consensus_reached": True})
+            return None
+        accepting = accepting or offer.consensus_reached
+        # Echo-copy without accept: keep as a non-consensus counter so chat continues.
+        if (
+            not accepting
+            and other_last is not None
+            and deals_match(offer, other_last)
+        ):
+            return offer.model_copy(update={"consensus_reached": False})
+        return apply_acceptance_semantics(
+            offer, other_last, text, accepting=accepting
+        )
 
     async def __call__(
         self, messages: Sequence[BaseAgentEvent | BaseChatMessage]
@@ -61,15 +70,12 @@ class JsonConsensusTermination(TerminationCondition):
                 continue
 
             speaker = self._speaker(message.source)
-            offer = parse_offer_from_text_lenient(
-                message.to_text(),
-                fallback=self._last_offer.get(speaker),
-            )
+            offer = self._normalize_message_offer(speaker, message.to_text())
             if offer is None:
                 continue
 
             self._last_offer[speaker] = offer
-            if self._check_explicit_consensus(speaker, offer) or self._both_latest_offers_match():
+            if offer.consensus_reached:
                 self._terminated = True
                 return StopMessage(
                     content="Parties reached agreement on the same offer",
@@ -80,5 +86,4 @@ class JsonConsensusTermination(TerminationCondition):
 
     async def reset(self) -> None:
         self._last_offer.clear()
-        self._last_consensus.clear()
         self._terminated = False

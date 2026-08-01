@@ -8,54 +8,78 @@ def _deal(**overrides) -> DealTerms:
         "downpayment": 70_000,
         "interest_rate_pct": 5.0,
         "loan_length_years": 22,
-        "interest_structure": 5,
+        "rate_type": "fixed",
+        "initial_period_years": 5,
+        "arrangement_fee": 999,
+        "cashback": 500,
+        "overpayment_allowance_pct": 10,
+        "erc_pct": 2,
+        "repayment_type": "capital_repayment",
+        "portable": True,
+        "free_valuation": True,
+        "free_legal": False,
         "consensus_reached": True,
     }
     defaults.update(overrides)
     return DealTerms(**defaults)
 
 
-def test_borrower_scores_higher_on_lower_downpayment():
+def test_borrower_scores_higher_on_lower_deposit():
     borrower = sample_borrower()
     low = score_for_borrower(_deal(downpayment=60_000), borrower)
     high = score_for_borrower(_deal(downpayment=80_000), borrower)
-
-    assert low.downpayment > high.downpayment
+    assert low.deposit > high.deposit
 
 
 def test_lender_scores_higher_on_higher_rate():
     lender = sample_lender()
     low = score_for_lender(_deal(interest_rate_pct=4.5), lender)
     high = score_for_lender(_deal(interest_rate_pct=6.0), lender)
-
     assert high.interest_rate > low.interest_rate
 
 
-def test_structure_mismatch_hurts_borrower_on_variable_deal():
-    borrower = sample_borrower()  # fixed 8, variable 3
-    fixed = score_for_borrower(_deal(interest_structure=2), borrower)
-    variable = score_for_borrower(_deal(interest_structure=10), borrower)
+def test_rate_type_match_helps_borrower():
+    borrower = sample_borrower()  # prefers fixed
+    fixed = score_for_borrower(_deal(rate_type="fixed"), borrower)
+    tracker = score_for_borrower(_deal(rate_type="tracker"), borrower)
+    assert fixed.rate_type > tracker.rate_type
+    assert fixed.total >= tracker.total
 
-    assert fixed.interest_structure > variable.interest_structure
-    assert fixed.total >= variable.total
 
-
-def test_structure_mismatch_hurts_lender_on_fixed_deal():
-    lender = sample_lender()  # fixed 2, variable 9
-    fixed = score_for_lender(_deal(interest_structure=1), lender)
-    variable = score_for_lender(_deal(interest_structure=10), lender)
-
-    assert variable.interest_structure > fixed.interest_structure
+def test_rate_type_match_helps_lender():
+    lender = sample_lender()  # prefers tracker
+    fixed = score_for_lender(_deal(rate_type="fixed"), lender)
+    tracker = score_for_lender(_deal(rate_type="tracker"), lender)
+    assert tracker.rate_type > fixed.rate_type
 
 
 def test_score_deal_returns_balanced_demo_midpoint():
-    scores = score_deal(
-        _deal(downpayment=70_000, interest_rate_pct=5.0, loan_length_years=22, interest_structure=5),
-        sample_borrower(),
-        sample_lender(),
-    )
-
+    scores = score_deal(_deal(), sample_borrower(), sample_lender())
     assert 1 <= scores.borrower_score <= 10
     assert 1 <= scores.lender_score <= 10
     assert "Score:" in scores.borrower_rationale
-    assert "Deterministic score" in scores.lender_rationale
+    assert "UK mortgage score" in scores.lender_rationale
+
+
+def test_feature_preference_strength_affects_score():
+    borrower = sample_borrower(portable_preference=10)
+    with_portable = score_for_borrower(_deal(portable=True), borrower)
+    without = score_for_borrower(_deal(portable=False), borrower)
+    assert with_portable.portable == 10.0
+    assert without.portable == 1.0
+    assert with_portable.portable > without.portable
+
+
+def test_legacy_bool_preference_coerces():
+    from loan_negotiation.models.loan_terms import BorrowerTerms
+
+    terms = BorrowerTerms(
+        min_downpayment=1,
+        max_downpayment=2,
+        prefer_portable=True,
+        prefer_free_valuation=False,
+        prefer_free_legal=True,
+    )
+    assert terms.portable_preference == 8
+    assert terms.free_valuation_preference == 3
+    assert terms.free_legal_preference == 8
