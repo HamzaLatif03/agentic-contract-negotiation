@@ -32,17 +32,7 @@ def ensure_model_ready(settings: Settings) -> None:
     entry = find_comparison_model(settings.model)
 
     if entry is not None and entry.runtime == "api":
-        by_provider = {
-            "gemini": settings.google_api_key,
-            "groq": settings.groq_api_key,
-            "openrouter": settings.openrouter_api_key,
-        }
-        has_key = bool(
-            provider_api_key(entry)
-            or by_provider.get(entry.provider)
-            or settings.llm_api_key
-        )
-        if not has_key:
+        if not provider_api_key(entry):
             needed = entry.key_env[0] if entry.key_env else "API key"
             raise RuntimeError(
                 f"Cannot use '{entry.label}' without {needed} "

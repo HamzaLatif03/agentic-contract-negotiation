@@ -1,5 +1,5 @@
-import type { DealTerms, WorkflowResult } from "../types";
-import { structureKind } from "../types";
+import type { DealTerms, LlmRunMetrics, WorkflowResult } from "../types";
+import { formatDealLine } from "../types";
 import { dealsEqual } from "../dealParse";
 
 interface ResultPanelProps {
@@ -33,48 +33,48 @@ function StatusBadge({ status }: { status: WorkflowResult["status"] }) {
   );
 }
 
+function formatScore(score: number): string {
+  return (Math.round(score * 10) / 10).toFixed(1);
+}
+
 function ScoreBar({ label, score, color }: { label: string; score: number; color: string }) {
+  const width = Math.max(0, Math.min(100, score * 10));
   return (
     <div>
       <div className="mb-1 flex justify-between text-xs text-slate-600">
         <span>{label}</span>
-        <span className="font-semibold">{score}/10</span>
+        <span className="font-semibold tabular-nums">{formatScore(score)}/10</span>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className={`h-full rounded-full ${color}`}
-          style={{ width: `${score * 10}%` }}
-        />
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${width}%` }} />
       </div>
     </div>
   );
 }
 
-function formatDealLine(deal: DealTerms): string {
-  return `£${deal.downpayment.toLocaleString()} down · ${deal.interest_rate_pct}% · ${deal.loan_length_years}yr · ${structureKind(deal.interest_structure)}`;
-}
-
 function DealGrid({ deal }: { deal: DealTerms }) {
+  const cells: { label: string; value: string }[] = [
+    { label: "Deposit", value: `£${deal.downpayment.toLocaleString("en-GB")}` },
+    { label: "Rate", value: `${deal.interest_rate_pct}% ${deal.rate_type}` },
+    { label: "Initial period", value: `${deal.initial_period_years} years` },
+    { label: "Full term", value: `${deal.loan_length_years} years` },
+    { label: "Repayment", value: deal.repayment_type.replaceAll("_", " ") },
+    { label: "Arrangement fee", value: `£${deal.arrangement_fee.toLocaleString("en-GB")}` },
+    { label: "Cashback", value: `£${deal.cashback.toLocaleString("en-GB")}` },
+    { label: "Overpayment", value: `${deal.overpayment_allowance_pct}%` },
+    { label: "ERC", value: `${deal.erc_pct}%` },
+    { label: "Portable", value: deal.portable ? "Yes" : "No" },
+    { label: "Free valuation", value: deal.free_valuation ? "Yes" : "No" },
+    { label: "Free legal", value: deal.free_legal ? "Yes" : "No" },
+  ];
   return (
-    <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-4 text-sm">
-      <div>
-        <p className="text-xs text-slate-500">Downpayment</p>
-        <p className="font-semibold text-slate-900">£{deal.downpayment.toLocaleString()}</p>
-      </div>
-      <div>
-        <p className="text-xs text-slate-500">Interest rate</p>
-        <p className="font-semibold text-slate-900">{deal.interest_rate_pct}%</p>
-      </div>
-      <div>
-        <p className="text-xs text-slate-500">Loan length</p>
-        <p className="font-semibold text-slate-900">{deal.loan_length_years} years</p>
-      </div>
-      <div>
-        <p className="text-xs text-slate-500">Interest structure</p>
-        <p className="font-semibold capitalize text-slate-900">
-          {structureKind(deal.interest_structure)}
-        </p>
-      </div>
+    <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-4 text-sm sm:grid-cols-3">
+      {cells.map((cell) => (
+        <div key={cell.label}>
+          <p className="text-xs text-slate-500">{cell.label}</p>
+          <p className="font-semibold capitalize text-slate-900">{cell.value}</p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -86,6 +86,78 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const rem = seconds - minutes * 60;
   return `${minutes}m ${rem.toFixed(0)}s`;
+}
+
+function formatTokens(n: number): string {
+  return n.toLocaleString("en-GB");
+}
+
+function tokensPerSecond(metrics: LlmRunMetrics): string | null {
+  if (metrics.duration_ms <= 0 || metrics.completion_tokens <= 0) return null;
+  const rate = metrics.completion_tokens / (metrics.duration_ms / 1000);
+  return `${rate.toFixed(1)} tok/s`;
+}
+
+function MetricCell({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200/80 bg-white px-3 py-2.5">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{value}</p>
+      {hint ? <p className="mt-0.5 text-[11px] text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function LlmMetricsCard({ metrics }: { metrics: LlmRunMetrics }) {
+  const throughput = tokensPerSecond(metrics);
+  return (
+    <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">LLM run</p>
+        <p className="mt-1 text-sm font-semibold text-slate-900">{metrics.model}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <MetricCell
+          label="Prompt tokens"
+          value={formatTokens(metrics.prompt_tokens)}
+          hint="Input to the model"
+        />
+        <MetricCell
+          label="Completion tokens"
+          value={formatTokens(metrics.completion_tokens)}
+          hint="Model output"
+        />
+        <MetricCell
+          label="Total tokens"
+          value={formatTokens(metrics.total_tokens)}
+          hint={throughput ? `≈ ${throughput} completion` : "Prompt + completion"}
+        />
+        <MetricCell
+          label="Duration"
+          value={formatDuration(metrics.duration_ms)}
+          hint="Full workflow wall time"
+        />
+        <MetricCell
+          label="Time to first output"
+          value={
+            metrics.time_to_first_token_ms != null
+              ? formatDuration(metrics.time_to_first_token_ms)
+              : "—"
+          }
+          hint="Until first agent message"
+        />
+        <MetricCell
+          label="Prompt share"
+          value={
+            metrics.total_tokens > 0
+              ? `${Math.round((metrics.prompt_tokens / metrics.total_tokens) * 100)}%`
+              : "—"
+          }
+          hint="Of total tokens"
+        />
+      </div>
+    </div>
+  );
 }
 
 export default function ResultPanel({ result, error }: ResultPanelProps) {
@@ -100,133 +172,69 @@ export default function ResultPanel({ result, error }: ResultPanelProps) {
 
   if (!result) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-5">
-        <h2 className="text-sm font-semibold text-slate-600">Result</h2>
-        <p className="mt-2 text-sm text-slate-400">
-          Final deal, scores, and approval status will appear here.
-        </p>
+      <div className="rounded-xl border border-dashed border-slate-200 bg-white p-5 text-sm text-slate-500">
+        Outcome appears here after negotiation.
       </div>
     );
   }
 
   const gap =
     result.scores != null
-      ? Math.abs(result.scores.borrower_score - result.scores.lender_score)
+      ? Math.round(
+          Math.abs(result.scores.borrower_score - result.scores.lender_score) * 10,
+        ) / 10
       : null;
-
-  const showNegotiatedComparison =
-    result.negotiated_deal != null &&
-    result.deal != null &&
-    !dealsEqual(result.negotiated_deal, result.deal);
-
-  const reasonTone =
-    result.status === "approved"
-      ? "text-slate-600"
-      : result.status === "impossible" || result.status === "rejected"
-        ? "text-orange-800"
-        : "text-amber-800";
 
   return (
     <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-slate-800">Outcome</h2>
-        <StatusBadge status={result.status} />
+        <div className="flex items-center gap-2">
+          {result.rounds != null ? (
+            <span className="text-xs tabular-nums text-slate-500">
+              {result.rounds} round{result.rounds === 1 ? "" : "s"}
+            </span>
+          ) : null}
+          <StatusBadge status={result.status} />
+        </div>
       </div>
 
       {result.deal && (
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            {result.fairness_adjusted ? "Final terms (after fairness)" : "Agreed terms"}
-          </p>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Agreed package</p>
           <DealGrid deal={result.deal} />
-        </div>
-      )}
-
-      {showNegotiatedComparison && result.negotiated_deal && (
-        <div className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500">
-          <p className="font-medium text-slate-600">Originally negotiated</p>
-          <p className="mt-1">{formatDealLine(result.negotiated_deal)}</p>
+          {result.negotiated_deal &&
+            result.fairness_adjusted &&
+            !dealsEqual(result.deal, result.negotiated_deal) && (
+              <p className="text-xs text-slate-500">
+                Negotiated before fairness nudge: {formatDealLine(result.negotiated_deal)}
+              </p>
+            )}
         </div>
       )}
 
       {result.scores && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Scores
-            </p>
-            {gap != null && (
-              <p className="text-xs text-slate-500">
-                Gap {gap}/2
-              </p>
-            )}
-          </div>
-          <ScoreBar
-            label="Borrower"
-            score={result.scores.borrower_score}
-            color="bg-blue-500"
-          />
-          <ScoreBar
-            label="Lender"
-            score={result.scores.lender_score}
-            color="bg-violet-500"
-          />
-        </div>
-      )}
-
-      {result.llm_metrics && (
-        <div className="space-y-2 border-t border-slate-100 pt-3">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            LLM run metrics
+            Scores{gap != null ? ` · gap ${formatScore(gap)}` : ""}
           </p>
-          <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs text-slate-600">
-            <div>
-              <dt className="text-slate-400">Model</dt>
-              <dd className="font-medium text-slate-800">{result.llm_metrics.model}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-400">Total tokens</dt>
-              <dd className="font-medium text-slate-800">
-                {result.llm_metrics.total_tokens.toLocaleString()}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-slate-400">Prompt tokens</dt>
-              <dd className="font-medium text-slate-800">
-                {result.llm_metrics.prompt_tokens.toLocaleString()}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-slate-400">Completion tokens</dt>
-              <dd className="font-medium text-slate-800">
-                {result.llm_metrics.completion_tokens.toLocaleString()}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-slate-400">Time to first output</dt>
-              <dd className="font-medium text-slate-800">
-                {result.llm_metrics.time_to_first_token_ms != null
-                  ? formatDuration(result.llm_metrics.time_to_first_token_ms)
-                  : "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-slate-400">Total duration</dt>
-              <dd className="font-medium text-slate-800">
-                {formatDuration(result.llm_metrics.duration_ms)}
-              </dd>
-            </div>
-          </dl>
+          <ScoreBar label="Borrower" score={result.scores.borrower_score} color="bg-blue-500" />
+          <ScoreBar label="Lender" score={result.scores.lender_score} color="bg-violet-500" />
         </div>
       )}
 
       {result.reasons.length > 0 && (
-        <ul className={`space-y-1 border-t border-slate-100 pt-3 text-xs ${reasonTone}`}>
-          {result.reasons.map((reason) => (
-            <li key={reason}>• {reason}</li>
-          ))}
-        </ul>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Notes</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-slate-600">
+            {result.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
       )}
+
+      {result.llm_metrics && <LlmMetricsCard metrics={result.llm_metrics} />}
     </div>
   );
 }

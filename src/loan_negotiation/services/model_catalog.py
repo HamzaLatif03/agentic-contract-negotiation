@@ -1,4 +1,4 @@
-"""Comparison models: Gemini, Groq, OpenRouter free routes + local Ollama."""
+"""Comparison models: Gemini, Mistral + local Ollama (no Hugging Face billing)."""
 
 from __future__ import annotations
 
@@ -8,11 +8,7 @@ from typing import Literal
 
 
 RuntimeKind = Literal["api", "ollama"]
-Provider = Literal["gemini", "groq", "openrouter", "ollama"]
-
-_OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-_OPENROUTER_KEYS = ("OPENROUTER_API_KEY", "LLAMA_API_KEY")
-_OPENROUTER_BASE_ENV = ("OPENROUTER_API_BASE_URL", "LLAMA_API_BASE_URL")
+Provider = Literal["gemini", "mistral", "ollama"]
 
 
 @dataclass(frozen=True)
@@ -28,43 +24,15 @@ class ComparisonModel:
     base_url_env: tuple[str, ...] = ()
 
 
-def _openrouter_free(
-    *,
-    id: str,
-    label: str,
-    model_id: str,
-    description: str,
-) -> ComparisonModel:
-    if not model_id.endswith(":free"):
-        raise ValueError(f"OpenRouter comparison models must use a :free id, got {model_id!r}")
-    return ComparisonModel(
-        id=id,
-        label=label,
-        runtime="api",
-        provider="openrouter",
-        model_id=model_id,
-        description=description,
-        default_base_url=_OPENROUTER_BASE,
-        key_env=_OPENROUTER_KEYS,
-        base_url_env=_OPENROUTER_BASE_ENV,
-    )
-
-
 COMPARISON_MODELS: tuple[ComparisonModel, ...] = (
-    # Ordered smallest → largest by approximate parameter count.
+    # Ordered roughly smallest → largest by parameter count.
     ComparisonModel(
         id="ollama-local",
         label="Llama 3.2",
         runtime="ollama",
         provider="ollama",
         model_id="llama3.2:latest",
-        description="~3B",
-    ),
-    _openrouter_free(
-        id="openrouter-small",
-        label="GPT-OSS 20B",
-        model_id="openai/gpt-oss-20b:free",
-        description="~20B",
+        description="~3B local",
     ),
     ComparisonModel(
         id="gemini-3.1-flash-lite",
@@ -77,28 +45,16 @@ COMPARISON_MODELS: tuple[ComparisonModel, ...] = (
         key_env=("GOOGLE_API_KEY", "GEMINI_API_KEY"),
         base_url_env=("GEMINI_API_BASE_URL", "GOOGLE_API_BASE_URL"),
     ),
-    _openrouter_free(
-        id="openrouter-medium",
-        label="Nemotron 3 Nano 30B",
-        model_id="nvidia/nemotron-3-nano-30b-a3b:free",
-        description="~30B",
-    ),
     ComparisonModel(
-        id="groq-llama-3.3-70b",
-        label="Llama 3.3 70B",
+        id="mistral-small",
+        label="Mistral Small",
         runtime="api",
-        provider="groq",
-        model_id="llama-3.3-70b-versatile",
-        description="~70B",
-        default_base_url="https://api.groq.com/openai/v1",
-        key_env=("GROQ_API_KEY",),
-        base_url_env=("GROQ_API_BASE_URL",),
-    ),
-    _openrouter_free(
-        id="openrouter-large",
-        label="Nemotron 3 Super 120B",
-        model_id="nvidia/nemotron-3-super-120b-a12b:free",
-        description="~120B",
+        provider="mistral",
+        model_id="mistral-small-latest",
+        description="Mistral free tier",
+        default_base_url="https://api.mistral.ai/v1",
+        key_env=("MISTRAL_API_KEY",),
+        base_url_env=("MISTRAL_API_BASE_URL",),
     ),
 )
 
@@ -107,21 +63,20 @@ def find_comparison_model(name: str | None) -> ComparisonModel | None:
     if not name:
         return None
     key = name.strip().lower()
+    aliases: dict[str, str] = {
+        "ollama": "ollama-local",
+        "local": "ollama-local",
+        "llama3.2": "ollama-local",
+        "llama3.2:latest": "ollama-local",
+        "mistral": "mistral-small",
+    }
+    target = aliases.get(key, key)
     for entry in COMPARISON_MODELS:
-        if key in {
+        if target in {
             entry.id.lower(),
             entry.label.lower(),
             entry.model_id.lower(),
         }:
-            return entry
-        if entry.runtime == "ollama" and key in {
-            "ollama",
-            "local",
-            "loan-neg-gpu",
-            "loan-neg-gpu:latest",
-        }:
-            return entry
-        if entry.provider == "groq" and key in {"groq", "groq-llama"}:
             return entry
     return None
 
@@ -135,10 +90,11 @@ def _env_first(names: tuple[str, ...]) -> str | None:
 
 
 def provider_supports_autogen_tools(entry: ComparisonModel | None) -> bool:
-    """Gemini 3.x requires thought_signature round-trips that AutoGen drops."""
+    """Some providers mishandle AutoGen tool round-trips; disable tools for those."""
     if entry is None:
         return True
-    return entry.provider != "gemini"
+    # Gemini 3.x drops thought_signature; Mistral often returns empty reflect-on-tool text.
+    return entry.provider not in {"gemini", "mistral"}
 
 
 def _settings_key_for(entry: ComparisonModel) -> str | None:
@@ -151,8 +107,7 @@ def _settings_key_for(entry: ComparisonModel) -> str | None:
         return None
     by_provider = {
         "gemini": settings.google_api_key,
-        "groq": settings.groq_api_key,
-        "openrouter": settings.openrouter_api_key,
+        "mistral": settings.mistral_api_key,
     }
     return by_provider.get(entry.provider) or settings.llm_api_key
 
@@ -166,8 +121,7 @@ def _settings_base_url_for(entry: ComparisonModel) -> str | None:
         return None
     by_provider = {
         "gemini": settings.gemini_api_base_url,
-        "groq": settings.groq_api_base_url,
-        "openrouter": settings.openrouter_api_base_url,
+        "mistral": settings.mistral_api_base_url,
     }
     return by_provider.get(entry.provider) or settings.llm_api_base_url
 
@@ -218,14 +172,11 @@ def preferred_ollama_name(installed: list[str], fallback: str = "llama3.2:latest
         "llama3.2",
         "llama3.2:1b",
         "llama3.2:3b",
-        "loan-neg-gpu",
-        "loan-neg-gpu:latest",
     )
     for preferred in preferred_order:
         matched = resolve_installed_name(preferred, installed)
         if matched:
             return matched
-    # Prefer smallest-looking tag among remaining (heuristic: avoid :70b / :8b when possible)
     light = [
         name
         for name in installed

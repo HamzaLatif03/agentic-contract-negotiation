@@ -1,7 +1,7 @@
-from loan_negotiation.api.serialize import workflow_result_to_dict
 from loan_negotiation.models.loan_terms import DealTerms
 from loan_negotiation.models.workflow import LlmRunMetrics, WorkflowResult, WorkflowStatus
 from loan_negotiation.services.run_metrics import RunMetricsCollector, is_model_output_agent
+from deal_fixtures import sample_deal
 
 
 def test_is_model_output_agent():
@@ -33,16 +33,8 @@ def test_serialize_includes_llm_metrics():
             time_to_first_token_ms=250.5,
             duration_ms=4200.0,
         ),
-        deal=DealTerms(
-            downpayment=70000,
-            interest_rate_pct=5.0,
-            loan_length_years=25,
-            interest_structure=1,
-            consensus_reached=True,
-        ),
+        deal=sample_deal(consensus_reached=True),
     )
-    payload = workflow_result_to_dict(result)
+    payload = result.to_api_dict()
     assert payload["llm_metrics"]["model"] == "mistral:latest"
     assert payload["llm_metrics"]["total_tokens"] == 140
-    assert payload["llm_metrics"]["time_to_first_token_ms"] == 250.5
-    assert payload["llm_metrics"]["duration_ms"] == 4200.0

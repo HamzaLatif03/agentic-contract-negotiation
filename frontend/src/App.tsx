@@ -3,9 +3,10 @@ import {
   checkHealth,
   defaultBorrowerTerms,
   defaultLenderTerms,
-  fetchDemoTerms,
+  fetchPersonaTerms,
+  fetchPersonas,
   fetchModels,
-  parseOfferPdf,
+  previewOpeningOffer,
   streamNegotiation,
 } from "./api";
 import ContractUpload from "./components/ContractUpload";
@@ -14,17 +15,28 @@ import ModelPicker from "./components/ModelPicker";
 import ResultPanel from "./components/ResultPanel";
 import TermsForm from "./components/TermsForm";
 import { applyFeedEventToResult } from "./dealParse";
-import type { BorrowerTerms, DealTerms, FeedEvent, LenderTerms, WorkflowResult } from "./types";
+import type {
+  BorrowerTerms,
+  DealTerms,
+  FeedEvent,
+  LenderTerms,
+  PersonaSummary,
+  WorkflowResult,
+} from "./types";
 
 let eventCounter = 0;
 
 export default function App() {
   const [borrower, setBorrower] = useState<BorrowerTerms>(defaultBorrowerTerms);
   const [lender, setLender] = useState<LenderTerms>(defaultLenderTerms);
-  const [openingOffer, setOpeningOffer] = useState<DealTerms | null>(null);
+  const [personas, setPersonas] = useState<PersonaSummary[]>([]);
+  const [selectedPersonaId, setSelectedPersonaId] = useState("demo");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [offerFilename, setOfferFilename] = useState<string | null>(null);
-  const [parseBusy, setParseBusy] = useState(false);
-  const [parseError, setParseError] = useState<string | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewDeal, setPreviewDeal] = useState<DealTerms | null>(null);
+  const [previewAnnouncement, setPreviewAnnouncement] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<
     Array<{
       id: string;
@@ -37,7 +49,7 @@ export default function App() {
     }>
   >([]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState("llama3.3:70b");
+  const [selectedModel, setSelectedModel] = useState("gemini-3.1-flash-lite");
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [events, setEvents] = useState<FeedEvent[]>([]);
@@ -72,31 +84,60 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    checkHealth().then(setApiOnline);
-    void loadModels();
-  }, [loadModels]);
-
-  const loadDemo = useCallback(async () => {
-    const demo = await fetchDemoTerms();
-    setBorrower(demo.borrower);
-    setLender(demo.lender);
+  const loadPersona = useCallback(async (personaId: string) => {
+    const terms = await fetchPersonaTerms(personaId);
+    setSelectedPersonaId(personaId);
+    setBorrower(terms.borrower);
+    setLender(terms.lender);
     setError(null);
   }, []);
 
+  useEffect(() => {
+    checkHealth().then(setApiOnline);
+    void loadModels();
+    void (async () => {
+      const rows = await fetchPersonas();
+      setPersonas(
+        rows.length > 0
+          ? rows
+          : [
+              {
+                id: "demo",
+                name: "Demo",
+                tag: "balanced",
+                description: "Mid-market overlap (offline fallback).",
+              },
+            ],
+      );
+      await loadPersona("demo");
+    })();
+  }, [loadModels, loadPersona]);
+
   const handlePdfUpload = useCallback(async (file: File) => {
-    setParseBusy(true);
-    setParseError(null);
-    try {
-      const parsed = await parseOfferPdf(file);
-      setOpeningOffer(parsed.opening_offer);
-      setOfferFilename(parsed.source_filename);
-    } catch (err) {
-      setOpeningOffer(null);
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setAttachError("Please upload a PDF file.");
+      setPdfFile(null);
       setOfferFilename(null);
-      setParseError(err instanceof Error ? err.message : String(err));
+      setPreviewDeal(null);
+      setPreviewAnnouncement(null);
+      return;
+    }
+    setAttachError(null);
+    setPdfFile(file);
+    setOfferFilename(file.name);
+    setPreviewDeal(null);
+    setPreviewAnnouncement(null);
+    setPreviewLoading(true);
+    try {
+      const preview = await previewOpeningOffer(file);
+      setPreviewDeal(preview.deal);
+      setPreviewAnnouncement(preview.announcement);
+    } catch (err) {
+      setPreviewDeal(null);
+      setPreviewAnnouncement(null);
+      setAttachError(err instanceof Error ? err.message : String(err));
     } finally {
-      setParseBusy(false);
+      setPreviewLoading(false);
     }
   }, []);
 
@@ -106,47 +147,52 @@ export default function App() {
     setResult(null);
     setError(null);
 
+    const persona = personas.find((p) => p.id === selectedPersonaId);
     const cancel = streamNegotiation(
       {
         borrower,
         lender,
-        opening_offer: openingOffer,
         llm_model: selectedModel,
+        persona_id: selectedPersonaId,
+        persona_name: persona?.name ?? selectedPersonaId,
       },
-      (message) => {
-        if (message.type === "event" && message.stage && message.output) {
-          setEvents((prev) => [
-            ...prev,
-            {
-              id: `evt-${++eventCounter}`,
-              stage: message.stage!,
-              agent: message.agent ?? "system",
-              output: message.output!,
-              timestamp: Date.now(),
-            },
-          ]);
-          setResult((prev) =>
-            applyFeedEventToResult(
-              prev,
-              message.stage!,
-              message.agent ?? "system",
-              message.output!,
-            ),
-          );
-        }
-        if (message.type === "complete" && message.result) {
-          setResult(message.result);
-        }
-        if (message.type === "error") {
-          setError(message.message ?? "Unknown error");
-        }
+      {
+        pdfFile,
+        onMessage: (message) => {
+          if (message.type === "event" && message.stage && message.output) {
+            setEvents((prev) => [
+              ...prev,
+              {
+                id: `evt-${++eventCounter}`,
+                stage: message.stage!,
+                agent: message.agent ?? "system",
+                output: message.output!,
+                timestamp: Date.now(),
+              },
+            ]);
+            setResult((prev) =>
+              applyFeedEventToResult(
+                prev,
+                message.stage!,
+                message.agent ?? "system",
+                message.output!,
+              ),
+            );
+          }
+          if (message.type === "complete" && message.result) {
+            setResult(message.result);
+          }
+          if (message.type === "error") {
+            setError(message.message ?? "Unknown error");
+          }
+        },
+        onError: (err) => setError(err.message),
+        onComplete: () => setRunning(false),
       },
-      (err) => setError(err.message),
-      () => setRunning(false),
     );
 
     return cancel;
-  }, [borrower, lender, openingOffer, selectedModel]);
+  }, [borrower, lender, pdfFile, personas, selectedModel, selectedPersonaId]);
 
   const handleSubmit = () => {
     startNegotiation();
@@ -187,28 +233,37 @@ export default function App() {
             loading={modelsLoading}
             error={modelsError}
             onChange={setSelectedModel}
-            onRefresh={() => void loadModels()}
           />
           <ContractUpload
-            openingOffer={openingOffer}
             sourceFilename={offerFilename}
             disabled={running}
-            busy={parseBusy}
-            error={parseError}
-            onUpload={handlePdfUpload}
+            error={attachError}
+            previewLoading={previewLoading}
+            previewDeal={previewDeal}
+            previewAnnouncement={previewAnnouncement}
+            onUpload={(file) => {
+              void handlePdfUpload(file);
+            }}
             onClear={() => {
-              setOpeningOffer(null);
+              setPdfFile(null);
               setOfferFilename(null);
-              setParseError(null);
+              setAttachError(null);
+              setPreviewDeal(null);
+              setPreviewAnnouncement(null);
+              setPreviewLoading(false);
             }}
           />
           <TermsForm
             borrower={borrower}
             lender={lender}
+            personas={personas}
+            selectedPersonaId={selectedPersonaId}
             disabled={running}
             onBorrowerChange={setBorrower}
             onLenderChange={setLender}
-            onLoadDemo={loadDemo}
+            onPersonaChange={(id) => {
+              void loadPersona(id);
+            }}
             onSubmit={handleSubmit}
           />
           <LiveFeed events={events} running={running} />

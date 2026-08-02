@@ -1,75 +1,178 @@
-import type { ReactNode } from "react";
-import type { BorrowerTerms, LenderTerms } from "../types";
-import RatePreferenceBars from "./RatePreferenceBars";
+import type { InitialPeriodYears, PartyTerms, PersonaSummary, RateType, RepaymentType } from "../types";
 
 interface TermsFormProps {
-  borrower: BorrowerTerms;
-  lender: LenderTerms;
+  borrower: PartyTerms;
+  lender: PartyTerms;
+  personas: PersonaSummary[];
+  selectedPersonaId: string;
   disabled: boolean;
-  onBorrowerChange: (terms: BorrowerTerms) => void;
-  onLenderChange: (terms: LenderTerms) => void;
-  onLoadDemo: () => void;
+  onBorrowerChange: (terms: PartyTerms) => void;
+  onLenderChange: (terms: PartyTerms) => void;
+  onPersonaChange: (personaId: string) => void;
   onSubmit: () => void;
 }
 
-function RangeField({
-  label,
-  min,
-  max,
-  onMinChange,
-  onMaxChange,
-  disabled,
-}: {
+const RANGE_FIELDS: { label: string; min: keyof PartyTerms; max: keyof PartyTerms }[] = [
+  { label: "Deposit (£)", min: "min_downpayment", max: "max_downpayment" },
+  { label: "Interest rate (%)", min: "min_interest_rate_pct", max: "max_interest_rate_pct" },
+  { label: "Loan term (years)", min: "min_loan_length_years", max: "max_loan_length_years" },
+  { label: "Arrangement fee (£)", min: "min_arrangement_fee", max: "max_arrangement_fee" },
+  { label: "Cashback (£)", min: "min_cashback", max: "max_cashback" },
+  {
+    label: "Overpayment allowance (%)",
+    min: "min_overpayment_allowance_pct",
+    max: "max_overpayment_allowance_pct",
+  },
+  { label: "ERC during deal (%)", min: "min_erc_pct", max: "max_erc_pct" },
+];
+
+const FEATURE_PREFS: {
+  key: "portable_preference" | "free_valuation_preference" | "free_legal_preference";
   label: string;
-  min: number;
-  max: number;
-  onMinChange: (value: number) => void;
-  onMaxChange: (value: number) => void;
-  disabled: boolean;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
-        {label}
-      </label>
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          type="number"
-          value={min}
-          disabled={disabled}
-          onChange={(e) => onMinChange(Number(e.target.value))}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-teal-500/30 focus:ring-2 disabled:opacity-50"
-          placeholder="Min"
-        />
-        <input
-          type="number"
-          value={max}
-          disabled={disabled}
-          onChange={(e) => onMaxChange(Number(e.target.value))}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-teal-500/30 focus:ring-2 disabled:opacity-50"
-          placeholder="Max"
-        />
-      </div>
-    </div>
-  );
+}[] = [
+  { key: "portable_preference", label: "Portable mortgage" },
+  { key: "free_valuation_preference", label: "Free valuation" },
+  { key: "free_legal_preference", label: "Free legal work" },
+];
+
+function preferenceHint(value: number): string {
+  if (value <= 3) return "prefer off / refuse";
+  if (value <= 4) return "lean against";
+  if (value <= 6) return "flexible — trade freely";
+  if (value <= 8) return "lean toward on";
+  return "must-have / strongly want";
 }
 
-function PartyPanel({
+function PartyFields({
   title,
   accentClass,
-  children,
+  terms,
+  disabled,
+  onChange,
 }: {
   title: string;
   accentClass: string;
-  children: ReactNode;
+  terms: PartyTerms;
+  disabled: boolean;
+  onChange: (terms: PartyTerms) => void;
 }) {
+  const inputClass =
+    "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-teal-500/30 focus:ring-2 disabled:opacity-50";
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center gap-2">
         <span className={`h-2 w-2 rounded-full ${accentClass}`} />
         <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
       </div>
-      <div className="space-y-4">{children}</div>
+      <div className="space-y-4">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Ranges</p>
+        {RANGE_FIELDS.map(({ label, min, max }) => (
+          <div key={label} className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-600">{label}</label>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                value={terms[min] as number}
+                disabled={disabled}
+                onChange={(e) => onChange({ ...terms, [min]: Number(e.target.value) })}
+                className={inputClass}
+                placeholder="Min"
+              />
+              <input
+                type="number"
+                value={terms[max] as number}
+                disabled={disabled}
+                onChange={(e) => onChange({ ...terms, [max]: Number(e.target.value) })}
+                className={inputClass}
+                placeholder="Max"
+              />
+            </div>
+          </div>
+        ))}
+
+        <p className="pt-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+          Product preferences
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="space-y-1 text-xs text-slate-600">
+            Rate type
+            <select
+              disabled={disabled}
+              value={terms.preferred_rate_type}
+              onChange={(e) =>
+                onChange({ ...terms, preferred_rate_type: e.target.value as RateType })
+              }
+              className={`block w-full ${inputClass}`}
+            >
+              <option value="fixed">Fixed</option>
+              <option value="tracker">Tracker</option>
+              <option value="discount">Discount</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-slate-600">
+            Initial deal period
+            <select
+              disabled={disabled}
+              value={terms.preferred_initial_period_years}
+              onChange={(e) =>
+                onChange({
+                  ...terms,
+                  preferred_initial_period_years: Number(e.target.value) as InitialPeriodYears,
+                })
+              }
+              className={`block w-full ${inputClass}`}
+            >
+              <option value={2}>2 years</option>
+              <option value={5}>5 years</option>
+              <option value={10}>10 years</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-slate-600 sm:col-span-2">
+            Repayment type
+            <select
+              disabled={disabled}
+              value={terms.preferred_repayment_type}
+              onChange={(e) =>
+                onChange({
+                  ...terms,
+                  preferred_repayment_type: e.target.value as RepaymentType,
+                })
+              }
+              className={`block w-full ${inputClass}`}
+            >
+              <option value="capital_repayment">Capital repayment</option>
+              <option value="interest_only">Interest only</option>
+            </select>
+          </label>
+        </div>
+
+        <p className="pt-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+          Feature desire (1 = off · 5 = flexible · 10 = on)
+        </p>
+        <div className="space-y-3">
+          {FEATURE_PREFS.map(({ key, label }) => (
+            <label key={key} className="block space-y-1 text-sm text-slate-700">
+              <div className="flex items-baseline justify-between gap-2">
+                <span>{label}</span>
+                <span className="text-xs tabular-nums text-slate-500">
+                  {terms[key]}/10 — {preferenceHint(terms[key])}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={1}
+                disabled={disabled}
+                value={terms[key]}
+                onChange={(e) => onChange({ ...terms, [key]: Number(e.target.value) })}
+                className="w-full accent-teal-600 disabled:opacity-50"
+              />
+            </label>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -77,133 +180,73 @@ function PartyPanel({
 export default function TermsForm({
   borrower,
   lender,
+  personas,
+  selectedPersonaId,
   disabled,
   onBorrowerChange,
   onLenderChange,
-  onLoadDemo,
+  onPersonaChange,
   onSubmit,
 }: TermsFormProps) {
+  const selected = personas.find((p) => p.id === selectedPersonaId);
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Starting positions</h1>
+          <h1 className="text-xl font-semibold text-slate-900">UK mortgage positions</h1>
           <p className="text-sm text-slate-500">
-            Set acceptable ranges and rate preferences for each party before negotiation begins.
+            Pick a persona scenario, then tweak ranges and feature desire before negotiating.
           </p>
         </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onLoadDemo}
-            disabled={disabled}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={disabled}
+          className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-teal-700 disabled:opacity-50"
+        >
+          {disabled ? "Negotiating…" : "Start negotiation"}
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label className="block space-y-1.5 text-sm text-slate-700">
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Persona
+          </span>
+          <select
+            disabled={disabled || personas.length === 0}
+            value={selectedPersonaId}
+            onChange={(e) => onPersonaChange(e.target.value)}
+            className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-teal-500/30 focus:ring-2 disabled:opacity-50"
           >
-            Load demo
-          </button>
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={disabled}
-            className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-teal-700 disabled:opacity-50"
-          >
-            {disabled ? "Negotiating…" : "Start negotiation"}
-          </button>
-        </div>
+            {personas.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} · {p.tag}
+              </option>
+            ))}
+          </select>
+        </label>
+        {selected ? (
+          <p className="mt-2 text-sm leading-relaxed text-slate-600">{selected.description}</p>
+        ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <PartyPanel title="Borrower" accentClass="bg-blue-500">
-          <RangeField
-            label="Downpayment (£)"
-            min={borrower.min_downpayment}
-            max={borrower.max_downpayment}
-            disabled={disabled}
-            onMinChange={(v) => onBorrowerChange({ ...borrower, min_downpayment: v })}
-            onMaxChange={(v) => onBorrowerChange({ ...borrower, max_downpayment: v })}
-          />
-          <RangeField
-            label="Interest rate (%)"
-            min={borrower.min_interest_rate_pct}
-            max={borrower.max_interest_rate_pct}
-            disabled={disabled}
-            onMinChange={(v) =>
-              onBorrowerChange({ ...borrower, min_interest_rate_pct: v })
-            }
-            onMaxChange={(v) =>
-              onBorrowerChange({ ...borrower, max_interest_rate_pct: v })
-            }
-          />
-          <RangeField
-            label="Loan length (years)"
-            min={borrower.min_loan_length_years}
-            max={borrower.max_loan_length_years}
-            disabled={disabled}
-            onMinChange={(v) =>
-              onBorrowerChange({ ...borrower, min_loan_length_years: v })
-            }
-            onMaxChange={(v) =>
-              onBorrowerChange({ ...borrower, max_loan_length_years: v })
-            }
-          />
-          <RatePreferenceBars
-            fixedLabel="Fixed rate preference"
-            variableLabel="Variable rate preference"
-            fixed={borrower.fixed_preference}
-            variable={borrower.variable_preference}
-            disabled={disabled}
-            onFixedChange={(v) => onBorrowerChange({ ...borrower, fixed_preference: v })}
-            onVariableChange={(v) =>
-              onBorrowerChange({ ...borrower, variable_preference: v })
-            }
-          />
-        </PartyPanel>
-
-        <PartyPanel title="Lender" accentClass="bg-violet-500">
-          <RangeField
-            label="Downpayment (£)"
-            min={lender.min_downpayment}
-            max={lender.max_downpayment}
-            disabled={disabled}
-            onMinChange={(v) => onLenderChange({ ...lender, min_downpayment: v })}
-            onMaxChange={(v) => onLenderChange({ ...lender, max_downpayment: v })}
-          />
-          <RangeField
-            label="Interest rate (%)"
-            min={lender.min_interest_rate_pct}
-            max={lender.max_interest_rate_pct}
-            disabled={disabled}
-            onMinChange={(v) =>
-              onLenderChange({ ...lender, min_interest_rate_pct: v })
-            }
-            onMaxChange={(v) =>
-              onLenderChange({ ...lender, max_interest_rate_pct: v })
-            }
-          />
-          <RangeField
-            label="Loan length (years)"
-            min={lender.min_loan_length_years}
-            max={lender.max_loan_length_years}
-            disabled={disabled}
-            onMinChange={(v) =>
-              onLenderChange({ ...lender, min_loan_length_years: v })
-            }
-            onMaxChange={(v) =>
-              onLenderChange({ ...lender, max_loan_length_years: v })
-            }
-          />
-          <RatePreferenceBars
-            fixedLabel="Fixed rate preference"
-            variableLabel="Variable rate preference"
-            fixed={lender.fixed_preference}
-            variable={lender.variable_preference}
-            disabled={disabled}
-            onFixedChange={(v) => onLenderChange({ ...lender, fixed_preference: v })}
-            onVariableChange={(v) =>
-              onLenderChange({ ...lender, variable_preference: v })
-            }
-          />
-        </PartyPanel>
+        <PartyFields
+          title="Borrower"
+          accentClass="bg-blue-500"
+          terms={borrower}
+          disabled={disabled}
+          onChange={onBorrowerChange}
+        />
+        <PartyFields
+          title="Lender"
+          accentClass="bg-violet-500"
+          terms={lender}
+          disabled={disabled}
+          onChange={onLenderChange}
+        />
       </div>
     </div>
   );

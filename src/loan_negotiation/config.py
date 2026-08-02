@@ -27,25 +27,17 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
     )
-    groq_api_key: str | None = Field(
+    mistral_api_key: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("GROQ_API_KEY"),
-    )
-    openrouter_api_key: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("OPENROUTER_API_KEY", "LLAMA_API_KEY"),
+        validation_alias=AliasChoices("MISTRAL_API_KEY"),
     )
     gemini_api_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/",
         validation_alias=AliasChoices("GEMINI_API_BASE_URL", "GOOGLE_API_BASE_URL"),
     )
-    groq_api_base_url: str = Field(
-        default="https://api.groq.com/openai/v1",
-        validation_alias=AliasChoices("GROQ_API_BASE_URL"),
-    )
-    openrouter_api_base_url: str = Field(
-        default="https://openrouter.ai/api/v1",
-        validation_alias=AliasChoices("OPENROUTER_API_BASE_URL", "LLAMA_API_BASE_URL"),
+    mistral_api_base_url: str = Field(
+        default="https://api.mistral.ai/v1",
+        validation_alias=AliasChoices("MISTRAL_API_BASE_URL"),
     )
     llm_api_base_url: str | None = Field(
         default=None,
@@ -68,16 +60,29 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MAX_NEGOTIATION_ROUNDS", "max_rounds"),
     )
     max_fairness_adjustments: int = Field(
-        default=5,
+        default=3,
         validation_alias=AliasChoices("MAX_FAIRNESS_ADJUSTMENTS", "max_fairness_adjustments"),
-        description="Term nudges when party scores differ by more than 2",
+        description=(
+            "Silent fairness nudges when party scores differ by more than 2 "
+            "(0 disables). Also used as a gate for mediator close recovery."
+        ),
+    )
+    max_validation_recoveries: int = Field(
+        default=1,
+        validation_alias=AliasChoices(
+            "MAX_VALIDATION_RECOVERIES", "max_validation_recoveries"
+        ),
+        description=(
+            "Legacy setting (kept for env compatibility). Invalid consensus is now "
+            "ironed by the middleman fairness path, then ratified once by each side "
+            "(no renegotiation)."
+        ),
     )
 
     @field_validator(
         "ollama_num_gpu",
         "google_api_key",
-        "groq_api_key",
-        "openrouter_api_key",
+        "mistral_api_key",
         "llm_api_key",
         "llm_api_base_url",
         mode="before",
@@ -94,12 +99,7 @@ class Settings(BaseSettings):
 
     def resolved_api_key(self) -> str | None:
         """Any configured comparison API key."""
-        return (
-            self.google_api_key
-            or self.groq_api_key
-            or self.openrouter_api_key
-            or self.llm_api_key
-        )
+        return self.google_api_key or self.mistral_api_key or self.llm_api_key
 
 
 @lru_cache

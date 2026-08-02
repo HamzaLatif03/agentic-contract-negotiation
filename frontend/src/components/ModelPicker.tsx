@@ -16,7 +16,6 @@ interface ModelPickerProps {
   loading: boolean;
   error: string | null;
   onChange: (ollamaName: string) => void;
-  onRefresh: () => void;
 }
 
 export default function ModelPicker({
@@ -27,23 +26,12 @@ export default function ModelPicker({
   loading,
   error,
   onChange,
-  onRefresh,
 }: ModelPickerProps) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-800">Models</h2>
-          <p className="mt-1 text-sm text-slate-500">Ordered by approximate size (smallest first).</p>
-        </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={disabled || loading}
-          className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-        >
-          {loading ? "Refreshing…" : "Refresh"}
-        </button>
+      <div className="mb-3">
+        <h2 className="text-sm font-semibold text-slate-800">Models</h2>
+        <p className="mt-1 text-sm text-slate-500">Ordered by approximate size (smallest first).</p>
       </div>
 
       {error && (
