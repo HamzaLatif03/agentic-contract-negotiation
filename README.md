@@ -1,12 +1,33 @@
 # Agentic Contract Negotiation
 
-Automated multi-agent loan contract negotiation using **Microsoft AutoGen**, with comparison models via **cloud APIs** (Gemini, Groq, OpenRouter) and optional local **Ollama**.
+Multi-agent **UK mortgage** negotiation with [Microsoft AutoGen](https://microsoft.github.io/autogen/). Borrower and lender agents bargain over deposit, rate, term, fees, and related terms. A middleman closes score gaps when needed; hard walls and deterministic scoring keep deals feasible and fair.
+
+The live comparison set is exactly **three** models:
+
+| Model | Runtime | Credential |
+|-------|---------|------------|
+| **Llama 3.2** | Local [Ollama](https://ollama.com/download) (`llama3.2:latest`) | Ollama running at `OLLAMA_BASE_URL` |
+| **Gemini 3.1 Flash Lite** | Google API | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
+| **Mistral Small** | Mistral API | `MISTRAL_API_KEY` |
+
+Run from the **CLI** or a **React** web UI with a live agent feed, curated personas, and optional lender PDF opening offers.
+
+## How it works
+
+1. **Feasibility** — Reject deals whose hard ranges never overlap.
+2. **Negotiation** — Borrower and lender agents exchange structured offers (up to `MAX_NEGOTIATION_ROUNDS`).
+3. **Middleman** — If needed, a fairness agent irons a package so both party scores sit within a small gap.
+4. **Ratification** — Each side accepts or rejects once; hard numeric walls still apply.
+5. **Outcome** — Status, scores, deal terms, and LLM metrics (tokens, latency) are returned and appended under `results/`.
+
+Optional PDF upload: text is extracted from the file, then **local Llama 3.2** always builds the structured opening offer. The selected comparison model continues the bargain so the **borrower counters first**.
 
 ## Prerequisites
 
-- [Conda](https://docs.conda.io/en/latest/miniconda.html)
-- API keys for the models you want to compare (see `.env.example`)
-- Optional: [Ollama](https://ollama.com/download) only if you use **Local Ollama**
+- [Conda](https://docs.conda.io/en/latest/miniconda.html) (Python 3.11)
+- API keys for Gemini and/or Mistral (see `.env.example`)
+- [Node.js](https://nodejs.org/) 18+ for the web UI
+- Optional: Ollama with `ollama pull llama3.2` for the local comparison model and PDF opening-offer extraction
 
 ## Setup
 
@@ -14,55 +35,29 @@ Automated multi-agent loan contract negotiation using **Microsoft AutoGen**, wit
 conda env create -f environment.yml
 conda activate loan-negotiation
 cp .env.example .env
-# Edit .env and set GOOGLE_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY
-pip install -e .
+# Edit .env — set GOOGLE_API_KEY and/or MISTRAL_API_KEY
 ```
 
-## Project layout
+The conda env installs the package in editable mode (`pip install -e .`).
 
-```
-src/loan_negotiation/
-├── config.py              # API keys, OLLAMA_BASE_URL, MODEL, MAX_ROUNDS
-├── models/
-│   ├── loan_terms.py      # BorrowerTerms, LenderTerms, DealTerms
-│   └── workflow.py        # WorkflowResult, ReviewFeedback, Scores
-├── services/
-│   ├── feasibility.py     # Deterministic impossible-deal detection
-│   ├── fairness.py        # Score-balance logic
-│   ├── deal_scoring.py    # Deterministic party scores
-│   └── model_catalog.py   # Comparison model switcher
-├── agents/
-│   ├── factory.py         # Model client + AssistantAgent builder
-│   ├── intake.py
-│   └── reviewer.py
-├── workflow/
-│   ├── orchestrator.py    # Main state machine (UI-agnostic)
-│   └── prompts.py         # System prompts per agent role
-├── api/
-│   ├── main.py            # FastAPI + SSE for web UI
-│   ├── schemas.py
-│   └── serialize.py
-└── cli/
-    ├── main.py            # Entry point
-    └── intake.py          # Interactive term collection
-frontend/                  # React + Tailwind (Vite)
-```
-
-## Usage
+## Run
 
 ### CLI
 
 ```bash
-loan-negotiate          # enter your own borrower and lender terms
-loan-negotiate --demo   # quick test with sample data
+conda activate loan-negotiation
+loan-negotiate                          # interactive borrower / lender intake
+loan-negotiate --demo                   # demo persona terms
+loan-negotiate --persona features-duel  # named persona from the catalog
+loan-negotiate --model mistral-small    # pick one of the three comparison models
 ```
 
-### Web UI (local)
+### Web UI
 
-Start the API and React dev server in two terminals:
+Two terminals:
 
 ```bash
-# Terminal 1 — API (loads keys from .env)
+# Terminal 1 — API
 conda activate loan-negotiation
 loan-negotiate-api
 
@@ -73,61 +68,78 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). Vite proxies `/api` to `http://127.0.0.1:8000`.
+Open [http://localhost:5173](http://localhost:5173). Vite proxies `/api` to the FastAPI server on port 8000.
 
-Optionally upload a **lender opening offer PDF**. The API extracts downpayment, rate, term, and fixed/variable structure, then seeds negotiation so the **borrower counters first**.
-
-Use the **Comparison models** picker:
-
-| Model | Provider |
-|-------|----------|
-| Gemini 3.1 Flash Lite | Google API (`GOOGLE_API_KEY`) |
-| Groq Llama 3.3 70B | Groq (`GROQ_API_KEY`) |
-| GPT-OSS 20B / Nemotron Nano 30B / Nemotron Super 120B | OpenRouter **free** (`OPENROUTER_API_KEY`, ids end in `:free`) |
-| Local Ollama | Optional local Ollama |
-
-Put keys in **`.env`** (never commit them). Refresh the picker after restarting the API.
-
-Each completed run reports **LLM run metrics** in the outcome panel: tokens, time to first model output, and total workflow duration.
-
-Agent messages print live in the feed as each stage runs (`negotiation`, `ranking`, etc.).
-
-Set `MAX_NEGOTIATION_ROUNDS=2` in `.env` for faster runs while testing.
-
-## CLI commands
-
-| Command | Description |
-|---------|-------------|
-| `loan-negotiate` | Interactive intake, then full agent workflow |
-| `loan-negotiate --demo` | Run with built-in sample borrower/lender data |
-| `loan-negotiate-api` | Start FastAPI server for the web UI |
+In the UI you can choose one of the three comparison models, a persona pair, optionally upload a lender offer PDF, and watch stages stream live.
 
 ## Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Google Gemini API key | unset |
-| `GROQ_API_KEY` | Groq API key | unset |
-| `OPENROUTER_API_KEY` / `LLAMA_API_KEY` | OpenRouter key (free Llama route) | unset |
-| `OLLAMA_MODEL` | Default catalog model id (overridable per run in the UI) | `gemini-3.1-flash-lite` |
-| `OLLAMA_BASE_URL` | Local Ollama URL (optional) | `http://localhost:11434` |
-| `OLLAMA_NUM_GPU` | Ollama GPU layers when using local Ollama | unset / auto |
-| `MAX_NEGOTIATION_ROUNDS` | Negotiation round limit per attempt | `10` |
-| `MAX_FAIRNESS_ADJUSTMENTS` | Max fairness nudges when score gap > 2 | `5` |
+| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Gemini API key | unset |
+| `MISTRAL_API_KEY` | Mistral API key | unset |
+| `OLLAMA_MODEL` | Default catalog id (`ollama-local`, `gemini-3.1-flash-lite`, or `mistral-small`) | `gemini-3.1-flash-lite` |
+| `OLLAMA_BASE_URL` | Local Ollama URL | `http://localhost:11434` |
+| `MAX_NEGOTIATION_ROUNDS` | Round limit per negotiation | `10` |
+| `MAX_FAIRNESS_ADJUSTMENTS` | Max silent fairness nudges when score gap > 2 | `3` |
 
-## Workflow outcomes
+Put keys in **`.env`** only — never commit them. Restart the API after changing keys. Use a lower `MAX_NEGOTIATION_ROUNDS` (for example `2`) for faster smoke tests.
+
+## Outcomes
 
 | Status | Meaning |
 |--------|---------|
 | `approved` | Consensus deal, valid ranges, score gap ≤ 2 |
-| `rejected` | Deal found but unfair (gap > 2) or out of range |
-| `no_deal` | Negotiation ended without a usable agreement |
+| `rejected` | Deal found but unfair or out of range |
+| `no_deal` | No usable agreement |
 | `impossible` | Opening ranges do not overlap |
 | `in_progress` | Live UI only — run still streaming |
 
-## Dependencies
+Completed runs append to `results/interactions.json`.
 
-Runtime and dev dependencies are listed in [`environment.yml`](environment.yml) and [`pyproject.toml`](pyproject.toml). Keep both in sync when adding packages.
+## Analysis plots
+
+```bash
+conda activate loan-negotiation
+python analysis/plot_interactions.py
+```
+
+Figures and `summary_by_model.csv` go to `analysis/figures/` (gitignored; regenerate anytime)..
+
+## Tests
+
+```bash
+conda activate loan-negotiation
+pytest
+```
+
+## Project layout
+
+```
+src/loan_negotiation/
+├── api/           # FastAPI + SSE for the web UI
+├── agents/        # Model clients and AutoGen agents
+├── cli/           # Typer CLI entry points
+├── models/        # Loan terms and workflow result types
+├── services/      # Feasibility, scoring, fairness, PDF extract, catalog
+└── workflow/      # Orchestrator, prompts, personas, deal parsing
+frontend/          # React + Vite + Tailwind UI
+analysis/          # Plot script (figures regenerated locally)
+results/           # Interaction logs
+tests/
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `loan-negotiate` | Interactive CLI negotiation |
+| `loan-negotiate --demo` | Demo terms |
+| `loan-negotiate --persona <id>` | Run a named persona |
+| `loan-negotiate --model <id>` | Force one of the three comparison models |
+| `loan-negotiate-api` | Start the API for the web UI |
+
+Dependencies live in [`environment.yml`](environment.yml) and [`pyproject.toml`](pyproject.toml). After dependency changes:
 
 ```bash
 conda env update -f environment.yml --prune

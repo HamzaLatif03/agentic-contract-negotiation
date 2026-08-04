@@ -29,3 +29,7 @@ frontend/*.tsbuildinfo
 
 # Generated report figures (regenerate with analysis/plot_interactions.py)
 analysis/figures/
+
+# Local sample / scratch PDFs (not part of the repo)
+samples/
+*.pdf
